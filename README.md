@@ -1,8 +1,15 @@
                                 VibeCheck-Upload 🚀
+                                <img width="775" height="242" alt="image" src="https://github.com/user-attachments/assets/9b485915-2251-46a6-8db1-36042b6b8948" />
+
 Automated File Upload Arsenal & Polyglot Research Lab
 VibeCheck-Upload is a security research toolkit and proof-of-concept (PoC) environment designed to exploit file upload vulnerabilities in "Vibe-Coded" applications.
 
     What is Vibe-Coding? As AI agents (Cursor, Lovable, Replit) allow developers to build apps at lightning speed, deep security audits are often skipped. This tool targets the common "blind spots" found in AI-generated file upload logic.
+
+    <img width="1001" height="542" alt="image" src="https://github.com/user-attachments/assets/5066d8af-1c76-45ee-81d3-b49e90813112" />
+![Uploading image.png…]()
+<img width="1012" height="413" alt="image" src="https://github.com/user-attachments/assets/d8240fd8-fbbc-4825-bb58-f56ecf0182ee" />
+
 
 🔍 Vulnerabilities Covered
 This arsenal automates the discovery of:
@@ -18,6 +25,9 @@ This arsenal automates the discovery of:
     Modular Scanner (vibecheck.py): A Python3 fuzzer that handles polyglot generation and multi-vector upload attempts.
     Auth Support: Built-in session handling for authenticated endpoints.
     Built-in Lab: A Dockerized environment featuring a vulnerable PHP backend to test your payloads safely.
+
+    ![Uploading image.png…]()
+
 
 🚀 Getting Started
 1. Setup the Research Lab
