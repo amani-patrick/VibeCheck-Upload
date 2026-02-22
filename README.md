@@ -10,6 +10,8 @@ VibeCheck-Upload is a security research toolkit and proof-of-concept (PoC) envir
     <img width="1001" height="542" alt="image" src="https://github.com/user-attachments/assets/5066d8af-1c76-45ee-81d3-b49e90813112" />
 
 <img width="1012" height="413" alt="image" src="https://github.com/user-attachments/assets/d8240fd8-fbbc-4825-bb58-f56ecf0182ee" />
+<img width="1001" height="542" alt="image" src="https://github.com/user-attachments/assets/515f70c2-89cf-42e5-bf19-c88ffa703d4e" />
+
 
 
 🔍 Vulnerabilities Covered
