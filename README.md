@@ -48,6 +48,7 @@ Use code with caution.
 text
 
 ├── vibecheck.py        # The main Python automation tool
+├── vibecheck_v2.py     # The improved version of vibecheck 
 ├── lab/
 │   ├── index.php       # Vulnerable "Vibe-Coded" PHP script
 │   ├── Dockerfile      # Lab environment configuration
@@ -65,5 +66,5 @@ To protect apps from these attacks:
 
 ⚖️ Disclaimer
 This tool is for educational and ethical security research purposes only. Only use it against systems you have explicit permission to test (e.g., your own lab or an authorized Bug Bounty program). Unauthorized access to computer systems is illegal.
-Author: Your Name / [Your GitHub Handle]
+Author: Your Name / Amani Patrick
 Research Niche: AI-Generated App Security & File Upload Vulnerabilities
